@@ -1,6 +1,7 @@
 """RCD Corp synthetic data generator — CLI orchestrator."""
 from __future__ import annotations
 
+import os
 import random
 import sys
 import time
@@ -211,16 +212,16 @@ def validate(
     import subprocess
 
     typer.echo(f"Running referential integrity checks on {output} ({format})...")
+    env = {**os.environ, "RCD_OUTPUT_DIR": output, "RCD_OUTPUT_FORMAT": format}
     result = subprocess.run(
         [
             sys.executable, "-m", "pytest",
             "rcd_data/tests/test_referential_integrity.py",
             "-v",
             "--tb=short",
-            f"--output={output}",
-            f"--fmt={format}",
         ],
         check=False,
+        env=env,
     )
     if result.returncode == 0:
         typer.echo("All checks passed.")

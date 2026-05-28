@@ -2,11 +2,9 @@
   <img src="docs/rcd-logo.png" alt="logo" width="600">
 </div>
 
-# RCD Corp 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
-Modular, reproducible Python CLI that generates realistic, interconnected synthetic operational data for **RCD (Real Company Data) Corp** — a fictional mid-to-large enterprise — across **10 business domains**, writing to **CSV**, **Parquet**, and **Postgres**.
-
+Python CLI that generates realistic, interconnected operational data for **RCD (Real Company Data) Corp**, a fictional mid-to-large enterprise, across **10 business domains**, writing to **CSV**, **Parquet**, and **Postgres**.
 ```
 RCD Corp — founded 2008, HQ São Paulo (BR), offices in Mexico City, Lisbon, Miami
 ~4,200 employees · ~$1.2B annual revenue · Ticker: RCDC
@@ -37,9 +35,7 @@ rcd-data info
 ```
 
 ## Setup
-
 ### Local (Python 3.11+)
-
 ```bash
 git clone https://github.com/lorenzouriel/rcd-corp
 cd rcd-corp
