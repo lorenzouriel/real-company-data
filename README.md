@@ -4,7 +4,7 @@
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
-Python CLI that generates realistic, interconnected operational data for **RCD (Real Company Data) Corp**, a fictional mid-to-large enterprise, across **10 business domains**, writing to **CSV**, **Parquet**, **Postgres**, and **SQL Server**.
+Python CLI that generates realistic, interconnected operational data for **RCD (Real Company Data) Corp**, a fictional mid-to-large enterprise, across **10 business domains** and **50+ tables**, writing to **CSV**, **Parquet**, **JSONL**, **XLSX**, **Postgres**, and **SQL Server** — including live streaming into every one of them.
 ```
 RCD Corp — founded 2008, HQ São Paulo (BR), offices in Mexico City, Lisbon, Miami
 ~4,200 employees · ~$1.2B annual revenue · Ticker: RCDC
@@ -24,7 +24,8 @@ rcd-data generate --profile standard --sink all
 # Generate only social media and support domains
 rcd-data generate --profile demo --only social_media,support --sink csv
 
-# Stream live batches — appends 25 rows/domain every 5 min to existing output
+# Stream live batches — appends 25 rows/domain every 5 min to every active sink
+# (files AND databases, if configured — see the stream options table below)
 rcd-data stream --profile demo --seed 42 --rows-per-tick 25 --interval 300
 
 # Validate referential integrity
@@ -67,6 +68,14 @@ rcd-data generate --profile demo --sink sqlserver
 docker compose --profile run up --build
 ```
 
+### Deploying to a VPS
+Turns this into a standing service: generate once into every sink, then keep
+`rcd-data stream` appending to all of them (files + both databases)
+continuously, files served over HTTPS, databases reachable by an IP
+allowlist. See [DEPLOY.md](DEPLOY.md) for the full runbook — firewall rules,
+TLS setup, and verification steps. Built on `docker-compose.prod.yml`
+(overlay on the base `docker-compose.yml`) and `.env.example`.
+
 ## CLI Reference
 ```
 rcd-data generate [OPTIONS]
@@ -106,6 +115,10 @@ rcd-data stream --profile demo --seed 42 --rows-per-tick 25 --interval 300
 
 # Single tick — useful for testing
 rcd-data stream --profile demo --seed 42 --interval 0
+
+# Stream straight into Postgres/SQL Server too (append-only, no dedup)
+rcd-data generate --profile demo --seed 42 --sink all
+rcd-data stream --profile demo --seed 42 --sink all --interval 300
 ```
 
 ### `validate` options
@@ -123,9 +136,9 @@ supply_chain  manufacturing  hr  support  observability
 ## Volume Profiles
 | Profile | Customers | Orders | Employees | Date Range | Approx Total Rows |
 |---------|-----------|--------|-----------|------------|-------------------|
-| `demo` | 1,000 | 10,000 | 200 | 30 days | ~200k |
+| `demo` | 1,000 | 10,000 | 200 | 360 days | ~200k |
 | `standard` | 50,000 | 1,000,000 | 4,200 | 360 days | ~15M |
-| `loadtest` | 500,000 | 20,000,000 | 4,200 | 730 days | ~200M+ |
+| `loadtest` | 500,000 | 20,000,000 | 4,200 | 1,461 days | ~200M+ |
 
 > **Note:** `machine_telemetry` and `api_requests` / `app_logs` are written as date-partitioned Parquet only on the `loadtest` profile regardless of `--sink`, to prevent OOM.
 
@@ -136,6 +149,10 @@ output/
 │   ├── customers.csv
 │   ├── orders.csv          ← stream appends rows, header preserved
 │   └── ...
+├── jsonl/
+│   └── orders.jsonl        ← stream appends lines
+├── xlsx/
+│   └── orders.xlsx         ← stream rewrites the whole file each tick (see caveat below)
 └── parquet/
     ├── customers/
     │   └── data.parquet
@@ -149,6 +166,10 @@ output/
 ```
 
 Parquet consumers (`pd.read_parquet(dir)`, DuckDB, Spark) automatically read all files in a table directory, so historical and streamed rows are always combined.
+
+If `--sink` includes `postgres`/`sqlserver`, `stream` appends directly into those tables too (plain `INSERT`, no dedup/upsert) — same growth model as the files, just rows instead of new files. There's no retention/pruning built in for any sink yet, so long-running `stream` deployments grow disk (and DB size) without bound; see [DEPLOY.md](DEPLOY.md)'s ongoing-operations section.
+
+**XLSX caveat:** Excel caps a sheet at 1,048,576 rows — tables that exceed it get silently truncated with a warning, so XLSX is realistically only usable at the `demo` profile. Under `stream`, the XLSX sink also does a full read-modify-rewrite of the file on every tick, which gets slower as the file grows — avoid it for long-running streams at anything beyond `demo` scale.
 
 ## Schema Reference
 ### Master Data
@@ -344,8 +365,14 @@ rcd_data/
 ├── sinks/
 │   ├── csv_sink.py          # supports append mode (stream command)
 │   ├── parquet_sink.py      # date-partitioned via PyArrow; stream_{ts}.parquet for append
-│   ├── postgres_sink.py     # SQLAlchemy + psycopg2
-│   └── sqlserver_sink.py    # SQLAlchemy + pyodbc (ODBC Driver 18)
+│   ├── jsonl_sink.py        # supports append mode (stream command)
+│   ├── xlsx_sink.py         # capped at Excel's 1,048,576 rows/sheet; demo profile only
+│   ├── postgres_sink.py     # SQLAlchemy + psycopg2; append=True → INSERT, else replace
+│   └── sqlserver_sink.py    # SQLAlchemy + pyodbc (ODBC Driver 18); append=True → INSERT, else replace
 └── tests/
-    └── test_referential_integrity.py
+    ├── test_referential_integrity.py
+    ├── test_output_completeness.py   # fails (not skips) on a missing/empty expected table
+    └── _sink_helpers.py               # shared DB-engine helper for the two test modules above
 ```
+
+Deployment-related files live outside `rcd_data/`: [DEPLOY.md](DEPLOY.md) (VPS runbook), `docker-compose.prod.yml` (streaming + Nginx + certbot overlay), `.env.example`, `infra/nginx/`, and `.github/workflows/validate-datasets.yml` (CI: generates + validates against every sink, including real Postgres/SQL Server service containers).
