@@ -1,0 +1,46 @@
+name: Validate Generated Datasets
+
+on:
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: validate-datasets-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  generate-and-validate:
+    name: generate (${{ matrix.sink }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        sink: [csv, parquet, jsonl, xlsx]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install rcd-data
+        run: pip install -e .
+
+      - name: Generate demo dataset (${{ matrix.sink }})
+        run: rcd-data generate --profile demo --seed 42 --sink ${{ matrix.sink }}
+
+      - name: Validate every table was generated
+        env:
+          RCD_OUTPUT_DIR: ./output
+          RCD_SINK: ${{ matrix.sink }}
+        run: python -m pytest rcd_data/tests/test_output_completeness.py -v
+
+      - name: Validate referential integrity
+        env:
+          RCD_OUTPUT_DIR: ./output
+          RCD_OUTPUT_FORMAT: ${{ matrix.sink }}
+        run: python -m pytest rcd_data/tests/test_referential_integrity.py -v

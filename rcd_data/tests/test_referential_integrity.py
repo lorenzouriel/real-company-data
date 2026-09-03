@@ -25,6 +25,16 @@ def _load(table: str) -> pd.DataFrame:
         if not parquet_dir.exists():
             pytest.skip(f"Table '{table}' not found at {parquet_dir}")
         return pd.read_parquet(parquet_dir)
+    elif FORMAT == "jsonl":
+        jsonl_path = Path(OUTPUT_DIR) / "jsonl" / f"{table}.jsonl"
+        if not jsonl_path.exists():
+            pytest.skip(f"Table '{table}' not found at {jsonl_path}")
+        return pd.read_json(jsonl_path, lines=True)
+    elif FORMAT == "xlsx":
+        xlsx_path = Path(OUTPUT_DIR) / "xlsx" / f"{table}.xlsx"
+        if not xlsx_path.exists():
+            pytest.skip(f"Table '{table}' not found at {xlsx_path}")
+        return pd.read_excel(xlsx_path)
     else:
         csv_path = Path(OUTPUT_DIR) / "csv" / f"{table}.csv"
         if not csv_path.exists():

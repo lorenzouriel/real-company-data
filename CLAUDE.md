@@ -31,7 +31,7 @@ ruff check rcd_data/
 
 **Profiles:** `demo` (~200k rows, 30 days), `standard` (~15M rows, 90 days), `loadtest` (~200M+ rows, 730 days).
 
-**Sinks:** `csv`, `parquet`, `postgres`, `all`. PostgreSQL requires `RCD_POSTGRES_URL` env var.
+**Sinks:** `csv`, `parquet`, `jsonl`, `xlsx`, `postgres`, `sqlserver`, `all`. PostgreSQL requires `RCD_POSTGRES_URL` env var; SQL Server requires `RCD_SQLSERVER_URL` env var (and ODBC Driver 18 for SQL Server installed locally). XLSX is capped at Excel's 1,048,576-row sheet limit — rows beyond that are truncated with a warning, so it's realistically usable only with the `demo` profile.
 
 ## Architecture
 

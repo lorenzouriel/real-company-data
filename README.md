@@ -4,7 +4,7 @@
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
-Python CLI that generates realistic, interconnected operational data for **RCD (Real Company Data) Corp**, a fictional mid-to-large enterprise, across **10 business domains**, writing to **CSV**, **Parquet**, and **Postgres**.
+Python CLI that generates realistic, interconnected operational data for **RCD (Real Company Data) Corp**, a fictional mid-to-large enterprise, across **10 business domains**, writing to **CSV**, **Parquet**, **Postgres**, and **SQL Server**.
 ```
 RCD Corp — founded 2008, HQ São Paulo (BR), offices in Mexico City, Lisbon, Miami
 ~4,200 employees · ~$1.2B annual revenue · Ticker: RCDC
@@ -49,7 +49,17 @@ pip install -e .
 ```bash
 docker compose up -d postgres
 export RCD_POSTGRES_URL="postgresql+psycopg2://rcd:rcd@localhost:5432/rcd_corp"
+$env:RCD_POSTGRES_URL="postgresql+psycopg2://rcd:rcd@localhost:5432/rcd_corp"
 rcd-data generate --profile demo --sink all
+```
+
+### With SQL Server (docker-compose)
+Requires the [ODBC Driver 18 for SQL Server](https://learn.microsoft.com/sql/connect/odbc/download-odbc-driver-for-sql-server) installed locally (already baked into the Docker image).
+```bash
+docker compose up -d sqlserver sqlserver-init
+export RCD_SQLSERVER_URL="mssql+pyodbc://sa:Rcd!Passw0rd@localhost:14330/rcd_corp?driver=ODBC+Driver+18+for+SQL+Server&TrustServerCertificate=yes"
+$env:RCD_SQLSERVER_URL="mssql+pyodbc://sa:Rcd!Passw0rd@localhost:14330/rcd_corp?driver=ODBC+Driver+18+for+SQL+Server&TrustServerCertificate=yes"
+rcd-data generate --profile demo --sink sqlserver
 ```
 
 ### Docker (full end-to-end)
@@ -70,7 +80,7 @@ rcd-data info     [OPTIONS]
 |--------|---------|-------------|
 | `--profile` | `demo` | Volume profile: `demo` · `standard` · `loadtest` |
 | `--seed` | `42` | Random seed — same seed = identical output |
-| `--sink` | `parquet` | Output sink: `csv` · `parquet` · `postgres` · `all` |
+| `--sink` | `parquet` | Output sink: `csv` · `parquet` · `jsonl` · `xlsx` · `postgres` · `sqlserver` · `all` |
 | `--only` | (all) | Comma-separated domain list to generate selectively |
 | `--config` | built-in | Path to a custom `config.yaml` |
 
@@ -82,7 +92,7 @@ Requires a prior `generate` run — reads the existing output to rebuild dimensi
 |--------|---------|-------------|
 | `--profile` | `demo` | Profile to use for FK pool sizing |
 | `--seed` | `42` | Base seed; tick N uses `seed + N` to avoid duplicate PKs |
-| `--sink` | `parquet` | Output sink: `csv` · `parquet` (Postgres not supported) |
+| `--sink` | `parquet` | Output sink: `csv` · `parquet` · `jsonl` (Postgres/SQL Server not supported) |
 | `--rows-per-tick` | `25` | Approximate rows per domain per tick |
 | `--interval` | `300` | Seconds between ticks; `0` = fire once and exit |
 | `--config` | built-in | Path to a custom `config.yaml` |
@@ -334,7 +344,8 @@ rcd_data/
 ├── sinks/
 │   ├── csv_sink.py          # supports append mode (stream command)
 │   ├── parquet_sink.py      # date-partitioned via PyArrow; stream_{ts}.parquet for append
-│   └── postgres_sink.py     # SQLAlchemy + psycopg2
+│   ├── postgres_sink.py     # SQLAlchemy + psycopg2
+│   └── sqlserver_sink.py    # SQLAlchemy + pyodbc (ODBC Driver 18)
 └── tests/
     └── test_referential_integrity.py
 ```
