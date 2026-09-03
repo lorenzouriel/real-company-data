@@ -14,12 +14,14 @@ from pathlib import Path
 import pandas as pd
 import pytest
 
+from ._sink_helpers import get_db_engine
+
 OUTPUT_DIR = os.environ.get("RCD_OUTPUT_DIR", "./output")
 FORMAT = os.environ.get("RCD_OUTPUT_FORMAT", "parquet")
 
 
 def _load(table: str) -> pd.DataFrame:
-    """Load a table from the output directory."""
+    """Load a table from the output directory or database."""
     if FORMAT == "parquet":
         parquet_dir = Path(OUTPUT_DIR) / "parquet" / table
         if not parquet_dir.exists():
@@ -35,6 +37,13 @@ def _load(table: str) -> pd.DataFrame:
         if not xlsx_path.exists():
             pytest.skip(f"Table '{table}' not found at {xlsx_path}")
         return pd.read_excel(xlsx_path)
+    elif FORMAT in ("postgres", "sqlserver"):
+        from sqlalchemy import inspect
+
+        engine = get_db_engine(FORMAT)
+        if not inspect(engine).has_table(table):
+            pytest.skip(f"Table '{table}' not found in {FORMAT} database")
+        return pd.read_sql_table(table, engine)
     else:
         csv_path = Path(OUTPUT_DIR) / "csv" / f"{table}.csv"
         if not csv_path.exists():

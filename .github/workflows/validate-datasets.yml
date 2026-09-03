@@ -44,3 +44,111 @@ jobs:
           RCD_OUTPUT_DIR: ./output
           RCD_OUTPUT_FORMAT: ${{ matrix.sink }}
         run: python -m pytest rcd_data/tests/test_referential_integrity.py -v
+
+  generate-and-validate-postgres:
+    name: generate (postgres)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: rcd
+          POSTGRES_PASSWORD: rcd
+          POSTGRES_DB: rcd_corp
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U rcd"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      RCD_POSTGRES_URL: postgresql+psycopg2://rcd:rcd@localhost:5432/rcd_corp
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install rcd-data
+        run: pip install -e .
+
+      - name: Generate demo dataset (postgres)
+        run: rcd-data generate --profile demo --seed 42 --sink postgres
+
+      - name: Validate every table was generated
+        env:
+          RCD_SINK: postgres
+        run: python -m pytest rcd_data/tests/test_output_completeness.py -v
+
+      - name: Validate referential integrity
+        env:
+          RCD_OUTPUT_FORMAT: postgres
+        run: python -m pytest rcd_data/tests/test_referential_integrity.py -v
+
+  generate-and-validate-sqlserver:
+    name: generate (sqlserver)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    services:
+      mssql:
+        image: mcr.microsoft.com/mssql/server:2022-latest
+        env:
+          ACCEPT_EULA: Y
+          MSSQL_SA_PASSWORD: RcdCorp!TestPassw0rd
+        ports:
+          - 1433:1433
+    env:
+      MSSQL_SA_PASSWORD: RcdCorp!TestPassw0rd
+      RCD_SQLSERVER_URL: "mssql+pyodbc://sa:RcdCorp!TestPassw0rd@localhost:1433/rcd_corp?driver=ODBC+Driver+18+for+SQL+Server&TrustServerCertificate=yes"
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install ODBC Driver 18 for SQL Server
+        run: |
+          curl -sSL -O https://packages.microsoft.com/config/ubuntu/$(lsb_release -rs)/packages-microsoft-prod.deb
+          sudo dpkg -i packages-microsoft-prod.deb
+          rm packages-microsoft-prod.deb
+          sudo apt-get update
+          sudo ACCEPT_EULA=Y apt-get install -y msodbcsql18 mssql-tools18 unixodbc-dev
+
+      - name: Install rcd-data
+        run: pip install -e .
+
+      - name: Wait for SQL Server and create database
+        run: |
+          export PATH="$PATH:/opt/mssql-tools18/bin"
+          for i in $(seq 1 30); do
+            if sqlcmd -S localhost -U sa -P "$MSSQL_SA_PASSWORD" -C -Q "SELECT 1" >/dev/null 2>&1; then
+              echo "SQL Server is up"
+              break
+            fi
+            echo "Waiting for SQL Server... ($i)"
+            sleep 2
+          done
+          sqlcmd -S localhost -U sa -P "$MSSQL_SA_PASSWORD" -C -Q "IF DB_ID('rcd_corp') IS NULL CREATE DATABASE rcd_corp;"
+
+      - name: Generate demo dataset (sqlserver)
+        run: rcd-data generate --profile demo --seed 42 --sink sqlserver
+
+      - name: Validate every table was generated
+        env:
+          RCD_SINK: sqlserver
+        run: python -m pytest rcd_data/tests/test_output_completeness.py -v
+
+      - name: Validate referential integrity
+        env:
+          RCD_OUTPUT_FORMAT: sqlserver
+        run: python -m pytest rcd_data/tests/test_referential_integrity.py -v

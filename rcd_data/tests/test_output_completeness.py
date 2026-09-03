@@ -17,6 +17,8 @@ from pathlib import Path
 import pandas as pd
 import pytest
 
+from ._sink_helpers import get_db_engine
+
 OUTPUT_DIR = Path(os.environ.get("RCD_OUTPUT_DIR", "./output"))
 SINK = os.environ.get("RCD_SINK", "parquet")
 
@@ -53,6 +55,7 @@ EXPECTED_TABLES = sorted([
 LOADTEST_ONLY_TABLES = {"machine_telemetry", "app_logs", "api_requests"}
 
 _SINK_DIRS = {"csv": "csv", "parquet": "parquet", "jsonl": "jsonl", "xlsx": "xlsx"}
+_DB_SINKS = {"postgres", "sqlserver"}
 
 
 def _table_path(table: str) -> Path:
@@ -77,16 +80,47 @@ def _row_count(path: Path) -> int:
     raise ValueError(f"Unsupported RCD_SINK '{SINK}'")
 
 
+def _db_row_count(table: str) -> int | None:
+    """Return the row count for `table` in the DB sink, or None if it doesn't exist."""
+    from sqlalchemy import inspect, text
+
+    engine = get_db_engine(SINK)
+    if not inspect(engine).has_table(table):
+        return None
+    open_q, close_q = ('"', '"') if SINK == "postgres" else ("[", "]")
+    with engine.connect() as conn:
+        return conn.execute(text(f"SELECT COUNT(*) FROM {open_q}{table}{close_q}")).scalar()
+
+
 class TestAllDatasetsGenerated:
     @pytest.mark.parametrize("table", EXPECTED_TABLES)
-    def test_table_file_exists_and_is_non_empty(self, table: str):
+    def test_table_exists_and_is_non_empty(self, table: str):
+        if SINK in _DB_SINKS:
+            rows = _db_row_count(table)
+            assert rows is not None, f"Missing table '{table}' in {SINK} database"
+            assert rows > 0, f"'{table}' in {SINK} database has zero rows"
+            return
+
         path = _table_path(table)
         assert path.exists(), f"Missing output for '{table}' at {path} (sink={SINK})"
         rows = _row_count(path)
         assert rows > 0, f"'{table}' output at {path} has zero rows (sink={SINK})"
 
-    def test_output_dir_has_no_untracked_tables(self):
+    def test_output_has_no_untracked_tables(self):
         """Catches the inverse failure: a stray/renamed table this list wasn't updated for."""
+        if SINK in _DB_SINKS:
+            from sqlalchemy import inspect
+
+            engine = get_db_engine(SINK)
+            found = set(inspect(engine).get_table_names())
+            found -= LOADTEST_ONLY_TABLES
+            extra = found - set(EXPECTED_TABLES)
+            assert not extra, (
+                f"Unexpected tables in {SINK} database not tracked in EXPECTED_TABLES: "
+                f"{sorted(extra)}. Update EXPECTED_TABLES in this test if this is intentional."
+            )
+            return
+
         if SINK not in _SINK_DIRS:
             pytest.skip(f"No file-based completeness check for sink '{SINK}'")
         sink_dir = OUTPUT_DIR / _SINK_DIRS[SINK]

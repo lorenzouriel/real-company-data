@@ -281,13 +281,11 @@ class SinkDispatcher:
                 sink.write(table_name, df, part_col)  # type: ignore[union-attr]
 
     def append_all(self, tables: dict[str, pd.DataFrame]) -> None:
-        """Write tables in append mode. DB sinks are skipped (not supported in stream)."""
+        """Write tables in append mode across all active sinks."""
         for table_name, df in tables.items():
             if df is None or df.empty:
                 continue
             is_high_vol = table_name in HIGH_VOLUME_TABLES
             part_col: str | None = PARTITION_COL if is_high_vol and "date" in df.columns else None
-            for sink_type, sink in self._sinks:
-                if sink_type in ("postgres", "sqlserver"):
-                    continue
+            for _sink_type, sink in self._sinks:
                 sink.write(table_name, df, part_col, append=True)  # type: ignore[union-attr]

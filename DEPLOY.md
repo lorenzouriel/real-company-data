@@ -1,19 +1,16 @@
 # Deploying RCD Data Generator to a VPS
 
 Turns the local CLI into a standing service: a `demo`-profile dataset is
-generated once into Postgres, SQL Server, and every file sink (CSV, Parquet,
-JSONL, XLSX), then `rcd-data stream --sink all` keeps appending fresh rows to
-the file sinks continuously. Files are browsable over HTTPS; the databases
-are reachable by external clients, restricted to an IP allowlist at the
-firewall.
+generated once into every sink (CSV, Parquet, JSONL, XLSX, Postgres, SQL
+Server), then `rcd-data stream --sink all` keeps appending fresh rows to
+*all* of them continuously — files and both databases. Files are browsable
+over HTTPS; the databases are reachable by external clients, restricted to
+an IP allowlist at the firewall.
 
-**Known limitation:** `rcd-data stream` rejects `--sink postgres` and
-`--sink sqlserver` outright — it only ever writes to file sinks, even when
-passed `--sink all` (`SinkDispatcher.append_all` in
-[base.py](rcd_data/generators/base.py) silently skips DB sinks). So the
-databases hold one fixed snapshot from the initial `generate`, while the
-files keep growing. This is a limitation of the current CLI, not this
-deployment.
+Streaming into Postgres/SQL Server uses plain `INSERT`-append (`if_exists=
+"append"` under the hood) — there's no dedup or upsert, just new rows landing
+every tick, same as the file sinks. Verified end-to-end: one tick with
+`--rows-per-tick 25` grows `orders` from 10,000 to 10,025 in both databases.
 
 ## 1. Provision the VPS
 
@@ -139,8 +136,9 @@ docker compose -f docker-compose.yml -f docker-compose.prod.yml --profile run up
 
 This runs, in order: `postgres` + `sqlserver` (healthy) → `sqlserver-init`
 (creates the `rcd_corp` DB) → `generator` (one-shot `generate --sink all`,
-populates both DBs + `./output`) → `streamer` (continuous `stream`, appends
-to `./output` only) + `nginx` (serves `./output`).
+populates both DBs + `./output`) → `streamer` (continuous `stream --sink all`,
+appends to `./output` *and* both databases every tick) + `nginx` (serves
+`./output`).
 
 ## 8. Verify
 
@@ -168,9 +166,11 @@ curl https://<domain-or-ip>/output/                       # 401 without credenti
 ```
 
 Streaming: wait ~10 minutes (two ticks at the default 300s interval), then
-confirm `./output/parquet/orders/` has a new `stream_<ts>.parquet` file and
-`./output/csv/orders.csv` has grown, while Postgres/SQL Server row counts
-are unchanged from step 7 (expected — see the limitation noted above).
+confirm `./output/parquet/orders/` has a new `stream_<ts>.parquet` file,
+`./output/csv/orders.csv` has grown, and the Postgres/SQL Server `orders`
+row counts have both grown too (`SELECT COUNT(*) FROM orders`) — same
+queries as step 8's allowlisted-IP check above, just rerun after a couple
+of ticks.
 
 ```bash
 docker compose -f docker-compose.yml -f docker-compose.prod.yml logs -f streamer
@@ -178,10 +178,13 @@ docker compose -f docker-compose.yml -f docker-compose.prod.yml logs -f streamer
 
 ## Ongoing operations
 
-- **Disk growth**: `stream` writes a new Parquet file per tick per table
-  and appends to CSV forever. Watch `df -h` on `./output`; there's no
-  built-in pruning yet — a cron job deleting `stream_*.parquet` older than
-  N days is the straightforward follow-up if this becomes a problem.
+- **Unbounded growth**: `stream` never stops appending — a new Parquet file
+  per tick per table, CSV/JSONL grow forever, and Postgres/SQL Server rows
+  accumulate with no dedup or pruning. Watch `df -h` on `./output` and the
+  DB volumes; there's no retention built in yet — a cron job deleting old
+  `stream_*.parquet` files and/or a periodic `DELETE ... WHERE created_at <
+  now() - interval` on the DB tables is the straightforward follow-up if
+  this becomes a problem.
 - **Rotating secrets**: edit `.env`, then
   `docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d`
   to recreate the affected containers.

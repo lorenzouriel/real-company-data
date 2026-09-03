@@ -92,7 +92,7 @@ Requires a prior `generate` run — reads the existing output to rebuild dimensi
 |--------|---------|-------------|
 | `--profile` | `demo` | Profile to use for FK pool sizing |
 | `--seed` | `42` | Base seed; tick N uses `seed + N` to avoid duplicate PKs |
-| `--sink` | `parquet` | Output sink: `csv` · `parquet` · `jsonl` (Postgres/SQL Server not supported) |
+| `--sink` | `parquet` | Output sink: `csv` · `parquet` · `jsonl` · `xlsx` · `postgres` · `sqlserver` · `all` |
 | `--rows-per-tick` | `25` | Approximate rows per domain per tick |
 | `--interval` | `300` | Seconds between ticks; `0` = fire once and exit |
 | `--config` | built-in | Path to a custom `config.yaml` |

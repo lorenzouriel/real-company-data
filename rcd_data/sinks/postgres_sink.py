@@ -18,16 +18,22 @@ class PostgresSink:
         url = connection_url or os.environ.get("RCD_POSTGRES_URL", DEFAULT_URL)
         self.engine: Engine = create_engine(url, pool_pre_ping=True)
 
-    def write(self, table_name: str, df: pd.DataFrame, partition_col: str | None = None) -> None:
+    def write(
+        self,
+        table_name: str,
+        df: pd.DataFrame,
+        partition_col: str | None = None,
+        append: bool = False,
+    ) -> None:
         if df is None or df.empty:
             log.warning("postgres_skip_empty", table=table_name)
             return
         df.to_sql(
             name=table_name,
             con=self.engine,
-            if_exists="replace",
+            if_exists="append" if append else "replace",
             index=False,
             chunksize=10_000,
             method="multi",
         )
-        log.info("postgres_written", table=table_name, rows=len(df))
+        log.info("postgres_written", table=table_name, rows=len(df), append=append)

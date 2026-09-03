@@ -1,8 +1,8 @@
-# Production overlay for VPS deployment. Adds continuous streaming (file sinks
-# only — see DEPLOY.md), a public file server (Nginx + Basic Auth + TLS), and
-# Let's Encrypt renewal on top of the base docker-compose.yml (postgres/
-# sqlserver/generator are unchanged — see .env.example for the settings that
-# make them safe to expose publicly).
+# Production overlay for VPS deployment. Adds continuous streaming (files
+# AND both databases — see DEPLOY.md), a public file server (Nginx + Basic
+# Auth + TLS), and Let's Encrypt renewal on top of the base docker-compose.yml
+# (postgres/sqlserver/generator are unchanged — see .env.example for the
+# settings that make them safe to expose publicly).
 #
 # Usage:
 #   docker compose -f docker-compose.yml -f docker-compose.prod.yml --profile run up -d
@@ -18,6 +18,9 @@ services:
     depends_on:
       generator:
         condition: service_completed_successfully
+    environment:
+      RCD_POSTGRES_URL: "postgresql+psycopg2://${POSTGRES_USER:-rcd}:${POSTGRES_PASSWORD:-rcd}@postgres:5432/${POSTGRES_DB:-rcd_corp}"
+      RCD_SQLSERVER_URL: "mssql+pyodbc://sa:${MSSQL_SA_PASSWORD:-Rcd!Passw0rd}@sqlserver:1433/${POSTGRES_DB:-rcd_corp}?driver=ODBC+Driver+18+for+SQL+Server&TrustServerCertificate=yes"
     volumes:
       - ./output:/app/output
     command:
