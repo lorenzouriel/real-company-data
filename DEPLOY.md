@@ -1,29 +1,38 @@
-# Deploying RCD Data Generator to a VPS
+# Running RCD Data Generator on a Home Lab (Tailscale)
 
-Turns the local CLI into a standing service: a `demo`-profile dataset is
-generated once into every sink (CSV, Parquet, JSONL, XLSX, Postgres, SQL
-Server), then `rcd-data stream --sink all` keeps appending fresh rows to
-*all* of them continuously — files and both databases. Files are browsable
-over HTTPS; the databases are reachable by external clients, restricted to
-an IP allowlist at the firewall.
+Turns the local CLI into a standing service on a home-lab box (e.g. an
+Ubuntu server managed via Cockpit): a `demo`-profile dataset is generated
+once into every sink (CSV, Parquet, JSONL, XLSX, Postgres, SQL Server), then
+`rcd-data stream --sink all` keeps appending fresh rows to *all* of them
+continuously.
 
-Streaming into Postgres/SQL Server uses plain `INSERT`-append (`if_exists=
-"append"` under the hood) — there's no dedup or upsert, just new rows landing
-every tick, same as the file sinks. Verified end-to-end: one tick with
-`--rows-per-tick 25` grows `orders` from 10,000 to 10,025 in both databases.
+**This is not a public-internet deployment.** A home network doesn't have
+the same exposure profile as a rented VPS — no stable public IP (often
+behind CGNAT), and a compromised exposed service sits on the same network
+as your other home devices. So instead of opening router ports, database
+access goes over **Tailscale**: an encrypted mesh network between only the
+devices you approve. Nothing here opens an inbound port on your router.
 
-## 1. Provision the VPS
+There is currently no file server / public HTTP exposure in this setup —
+that piece (Nginx + TLS + Basic Auth) was removed along with the VPS
+approach. If you later need the output files reachable by something that
+isn't on your tailnet, look at Tailscale Funnel (public HTTPS ingress for
+one local service, zero domain needed) or a Cloudflare Tunnel (needs a
+domain, adds Cloudflare Access/WAF) — pick that back up as a separate task
+rather than assuming it's covered here.
 
-- Ubuntu 22.04 or 24.04 LTS, minimum **4 vCPU / 8 GB RAM / 60 GB SSD**
-  (SQL Server 2025 alone wants ≥2 GB headroom; Postgres + the generator
-  container need modest but real overhead on top).
-- Create a non-root sudo user and disable password SSH login (key-only):
-  ```bash
-  adduser deploy && usermod -aG sudo deploy
-  # then in /etc/ssh/sshd_config: PasswordAuthentication no
-  systemctl restart sshd
-  ```
-- Optional but recommended: `sudo apt install -y fail2ban`.
+## 1. Install Tailscale on the server
+
+```bash
+curl -fsSL https://tailscale.com/install.sh | sh
+sudo tailscale up
+```
+Authenticate via the printed browser link, then get the server's stable
+tailnet IP (persists across reboots — it's tied to the device's identity,
+not DHCP):
+```bash
+tailscale ip -4   # e.g. 100.101.102.103
+```
 
 ## 2. Install Docker
 
@@ -33,32 +42,7 @@ sudo usermod -aG docker $USER
 # log out/in for the group change to take effect
 ```
 
-## 3. Firewall (ufw)
-
-```bash
-sudo ufw default deny incoming
-sudo ufw default allow outgoing
-sudo ufw allow 22/tcp        # SSH — restrict to your IP if it's static, see below
-sudo ufw allow 80/tcp
-sudo ufw allow 443/tcp
-
-# Database access — repeat for every consumer IP (BI tool, teammate, CI runner, ...)
-sudo ufw allow from <ADMIN_IP> to any port 5432 proto tcp
-sudo ufw allow from <ADMIN_IP> to any port 1433 proto tcp
-
-sudo ufw enable
-sudo ufw status numbered     # verify before walking away
-```
-
-To add/remove a consumer later: `sudo ufw allow from <ip> to any port 5432 proto tcp`
-or `sudo ufw delete <rule-number>` (from `ufw status numbered`). Never
-`ufw allow 5432` / `1433` without `from <ip>` — that opens it to the whole
-internet, which is explicitly not the model here.
-
-If your own IP is static, also restrict port 22 the same way instead of
-leaving it open to `any`.
-
-## 4. Clone the repo and configure secrets
+## 3. Clone the repo and configure secrets
 
 ```bash
 git clone https://github.com/lorenzouriel/rcd-corp
@@ -68,112 +52,75 @@ cp .env.example .env
 
 Edit `.env`:
 - Set strong `POSTGRES_PASSWORD` and `MSSQL_SA_PASSWORD` (generate with
-  `openssl rand -base64 24`) — **do not deploy with the `rcd`/`Rcd!Passw0rd`
-  defaults publicly.**
-- Set `POSTGRES_BIND=0.0.0.0`, `SQLSERVER_BIND=0.0.0.0`, `SQLSERVER_PORT=1433`
-  (the `14330` default only exists to dodge a local Windows dev conflict —
-  not needed on a fresh VPS).
-- Set `DOMAIN` if you have one pointed at the VPS's IP (A record). Leave
-  blank to use the self-signed fallback in step 6.
+  `openssl rand -base64 24`) — Tailscale controls *reachability*, not
+  authentication, so weak DB passwords are still a real risk to anyone else
+  on your tailnet.
+- Set `POSTGRES_BIND` and `SQLSERVER_BIND` to the server's Tailscale IP from
+  step 1 (e.g. `100.101.102.103`), and `SQLSERVER_PORT=1433` (the `14330`
+  default only exists to dodge a local Windows dev conflict — irrelevant on
+  a Linux host). **Do not set either `*_BIND` to `0.0.0.0`** — binding to
+  the Tailscale IP specifically is what keeps the DB off the LAN and off
+  the internet; there's nothing else enforcing that boundary.
 
-## 5. Basic Auth for the file server
-
-```bash
-sudo apt install -y apache2-utils
-htpasswd -c infra/nginx/.htpasswd <username>
-```
-(drop `-c` for additional users after the first).
-
-## 6. TLS
-
-**With a domain** (recommended): point its A record at the VPS IP first,
-then:
-```bash
-cp infra/nginx/rcd-data.conf.example infra/nginx/rcd-data.conf
-sed -i "s/YOUR_DOMAIN/<your-domain>/g" infra/nginx/rcd-data.conf
-mkdir -p infra/certbot/www infra/certbot/conf/live/<your-domain>
-
-# Nginx's config expects a cert to already exist at that path before it will
-# start — but certbot needs Nginx running on port 80 to answer the HTTP-01
-# challenge and issue the real one. Break the chicken-and-egg with a throwaway
-# self-signed placeholder so Nginx can boot; certbot overwrites it below.
-openssl req -x509 -nodes -days 1 -newkey rsa:2048 \
-  -keyout infra/certbot/conf/live/<your-domain>/privkey.pem \
-  -out infra/certbot/conf/live/<your-domain>/fullchain.pem \
-  -subj "/CN=<your-domain>"
-
-docker compose -f docker-compose.yml -f docker-compose.prod.yml --profile run up -d nginx
-
-docker compose -f docker-compose.yml -f docker-compose.prod.yml --profile tls run --rm certbot \
-  certonly --webroot -w /var/www/certbot -d <your-domain> \
-  --email you@example.com --agree-tos --non-interactive --force-renewal
-
-docker compose -f docker-compose.yml -f docker-compose.prod.yml restart nginx
-```
-Renewal (add to root's crontab, twice daily is the certbot-recommended cadence):
-```
-0 3,15 * * * cd /path/to/rcd-corp && docker compose -f docker-compose.yml -f docker-compose.prod.yml --profile tls run --rm certbot renew -q && docker compose -f docker-compose.yml -f docker-compose.prod.yml restart nginx
-```
-
-**Without a domain** (self-signed, browsers will show a warning):
-```bash
-mkdir -p infra/certbot/conf/live/selfsigned
-openssl req -x509 -nodes -days 825 -newkey rsa:2048 \
-  -keyout infra/certbot/conf/live/selfsigned/privkey.pem \
-  -out infra/certbot/conf/live/selfsigned/fullchain.pem \
-  -subj "/CN=$(curl -s ifconfig.me)"
-cp infra/nginx/rcd-data.conf.example infra/nginx/rcd-data.conf
-sed -i "s/YOUR_DOMAIN/_/g" infra/nginx/rcd-data.conf
-# then edit infra/nginx/rcd-data.conf: comment the Let's Encrypt
-# ssl_certificate lines and uncomment the selfsigned ones (see the file's comments)
-```
-
-## 7. Bring the stack up
+## 4. Bring the stack up
 
 ```bash
-docker compose -f docker-compose.yml -f docker-compose.prod.yml --profile run up -d --build
+docker compose --profile run up -d --build
 ```
 
 This runs, in order: `postgres` + `sqlserver` (healthy) → `sqlserver-init`
 (creates the `rcd_corp` DB) → `generator` (one-shot `generate --sink all`,
-populates both DBs + `./output`) → `streamer` (continuous `stream --sink all`,
-appends to `./output` *and* both databases every tick) + `nginx` (serves
-`./output`).
+populates both DBs + `./output`) → `streamer` (continuous `stream --sink
+all`, appends to `./output` and both databases every tick).
 
-## 8. Verify
+## 5. Connect from another device
 
+Install Tailscale on that device too and join the same tailnet, then
+connect exactly like any normal DB connection, using the server's Tailscale
+IP:
 ```bash
-docker compose -f docker-compose.yml -f docker-compose.prod.yml ps
-# postgres/sqlserver: healthy · generator: exited (0) · streamer/nginx: running
+psql "postgresql://rcd:<pw>@100.101.102.103:5432/rcd_corp"
+sqlcmd -S 100.101.102.103,1433 -U sa -P <pw> -C
 ```
 
-From an **allowlisted** IP:
+## 6. (Recommended) Restrict which tailnet devices can reach the DB ports
+
+By default every device on your tailnet can reach every other device. If
+you don't want that — e.g. a phone you added for something unrelated
+shouldn't be able to hit Postgres — tag the server and scope access in the
+tailnet policy file (admin console → Access Controls):
+```json
+{
+  "tagOwners": { "tag:db-server": ["autogroup:admin"] },
+  "acls": [
+    { "action": "accept", "src": ["your-user-or-device-tag"], "dst": ["tag:db-server:5432,1433"] }
+  ]
+}
+```
+Tag the server: `sudo tailscale up --advertise-tags=tag:db-server`.
+
+## 7. Verify
+
 ```bash
-psql "postgresql://rcd:<pw>@<vps-ip>:5432/rcd_corp" -c '\dt'
-sqlcmd -S <vps-ip>,1433 -U sa -P <pw> -C -Q "SELECT COUNT(*) FROM customers"
+docker compose ps
+# postgres/sqlserver: healthy · generator: exited (0) · streamer: running
 ```
 
-From a **non-allowlisted** IP, confirm the ports are unreachable (connection
-should time out, not just auth-fail):
+From a device **on your tailnet**:
 ```bash
-nc -vz -w 3 <vps-ip> 5432   # expect "Connection timed out" / refused
+psql "postgresql://rcd:<pw>@<tailscale-ip>:5432/rcd_corp" -c '\dt'
+sqlcmd -S <tailscale-ip>,1433 -U sa -P <pw> -C -Q "SELECT COUNT(*) FROM customers"
 ```
 
-Files:
-```bash
-curl -u <user>:<pass> https://<domain-or-ip>/output/     # 200, directory listing
-curl https://<domain-or-ip>/output/                       # 401 without credentials
-```
+From a device **not on your tailnet**, confirm the ports are unreachable —
+there should be nothing to connect to at all, not even a refused connection
+on your public IP (Tailscale traffic doesn't touch the LAN/WAN interfaces).
 
 Streaming: wait ~10 minutes (two ticks at the default 300s interval), then
-confirm `./output/parquet/orders/` has a new `stream_<ts>.parquet` file,
-`./output/csv/orders.csv` has grown, and the Postgres/SQL Server `orders`
-row counts have both grown too (`SELECT COUNT(*) FROM orders`) — same
-queries as step 8's allowlisted-IP check above, just rerun after a couple
-of ticks.
+rerun the `SELECT COUNT(*)` queries above and confirm the counts grew.
 
 ```bash
-docker compose -f docker-compose.yml -f docker-compose.prod.yml logs -f streamer
+docker compose logs -f streamer
 ```
 
 ## Ongoing operations
@@ -185,9 +132,9 @@ docker compose -f docker-compose.yml -f docker-compose.prod.yml logs -f streamer
   `stream_*.parquet` files and/or a periodic `DELETE ... WHERE created_at <
   now() - interval` on the DB tables is the straightforward follow-up if
   this becomes a problem.
-- **Rotating secrets**: edit `.env`, then
-  `docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d`
-  to recreate the affected containers.
-- **Adding/removing a DB consumer IP**: `sudo ufw allow from <ip> to any port 5432 proto tcp` /
-  `sudo ufw delete <rule-number>` (see step 3).
-- **Re-running a specific domain**: `docker compose -f docker-compose.yml -f docker-compose.prod.yml run --rm generator rcd-data generate --profile demo --only <domain> --sink all`.
+- **Rotating secrets**: edit `.env`, then `docker compose up -d` to recreate
+  the affected containers.
+- **Cockpit**: if you're managing this box via Cockpit (`:9090`), keep that
+  off the public internet the same way — access it over Tailscale rather
+  than exposing the port directly.
+- **Re-running a specific domain**: `docker compose run --rm generator rcd-data generate --profile demo --only <domain> --sink all`.

@@ -68,13 +68,13 @@ rcd-data generate --profile demo --sink sqlserver
 docker compose --profile run up --build
 ```
 
-### Deploying to a VPS
+### Running as a standing service (home lab / Tailscale)
 Turns this into a standing service: generate once into every sink, then keep
 `rcd-data stream` appending to all of them (files + both databases)
-continuously, files served over HTTPS, databases reachable by an IP
-allowlist. See [DEPLOY.md](DEPLOY.md) for the full runbook — firewall rules,
-TLS setup, and verification steps. Built on `docker-compose.prod.yml`
-(overlay on the base `docker-compose.yml`) and `.env.example`.
+continuously. Database access is over [Tailscale](https://tailscale.com)
+rather than a public port — no router/firewall exposure at all. See
+[DEPLOY.md](DEPLOY.md) for the full runbook. Built on the `streamer` service
+in `docker-compose.yml` and `.env.example`.
 
 ## CLI Reference
 ```
@@ -375,4 +375,4 @@ rcd_data/
     └── _sink_helpers.py               # shared DB-engine helper for the two test modules above
 ```
 
-Deployment-related files live outside `rcd_data/`: [DEPLOY.md](DEPLOY.md) (VPS runbook), `docker-compose.prod.yml` (streaming + Nginx + certbot overlay), `.env.example`, `infra/nginx/`, and `.github/workflows/validate-datasets.yml` (CI: generates + validates against every sink, including real Postgres/SQL Server service containers).
+Deployment-related files live outside `rcd_data/`: [DEPLOY.md](DEPLOY.md) (home-lab/Tailscale runbook), `docker-compose.yml` (`generator` + `streamer` services, both gated behind `--profile run`), `.env.example`, and `.github/workflows/validate-datasets.yml` (CI: generates + validates against every sink, including real Postgres/SQL Server service containers).

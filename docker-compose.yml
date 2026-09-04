@@ -69,6 +69,36 @@ services:
     profiles:
       - run
 
+  streamer:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: rcd_streamer
+    depends_on:
+      generator:
+        condition: service_completed_successfully
+    environment:
+      RCD_POSTGRES_URL: "postgresql+psycopg2://${POSTGRES_USER:-rcd}:${POSTGRES_PASSWORD:-rcd}@postgres:5432/${POSTGRES_DB:-rcd_corp}"
+      RCD_SQLSERVER_URL: "mssql+pyodbc://sa:${MSSQL_SA_PASSWORD:-Rcd!Passw0rd}@sqlserver:1433/${POSTGRES_DB:-rcd_corp}?driver=ODBC+Driver+18+for+SQL+Server&TrustServerCertificate=yes"
+    volumes:
+      - ./output:/app/output
+    command:
+      - "rcd-data"
+      - "stream"
+      - "--profile"
+      - "${GEN_PROFILE:-demo}"
+      - "--seed"
+      - "${GEN_SEED:-42}"
+      - "--sink"
+      - "all"
+      - "--rows-per-tick"
+      - "${STREAM_ROWS_PER_TICK:-25}"
+      - "--interval"
+      - "${STREAM_INTERVAL:-300}"
+    restart: unless-stopped
+    profiles:
+      - run
+
 volumes:
   rcd_pgdata:
   rcd_mssqldata:
