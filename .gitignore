@@ -4,8 +4,5 @@ __pycache__/
 rcd_data.egg-info/
 .claude/
 .env
-infra/nginx/rcd-data.conf
-infra/nginx/.htpasswd
-infra/certbot/
 .ruff_cache/
 .pytest_cache/
