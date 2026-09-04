@@ -65,7 +65,7 @@ services:
       RCD_SQLSERVER_URL: "mssql+pyodbc://sa:${MSSQL_SA_PASSWORD:-Rcd!Passw0rd}@sqlserver:1433/${POSTGRES_DB:-rcd_corp}?driver=ODBC+Driver+18+for+SQL+Server&TrustServerCertificate=yes"
     volumes:
       - ./output:/app/output
-    command: ["rcd-data", "generate", "--profile", "${GEN_PROFILE:-demo}", "--seed", "${GEN_SEED:-42}", "--sink", "all"]
+    command: ["generate", "--profile", "${GEN_PROFILE:-demo}", "--seed", "${GEN_SEED:-42}", "--sink", "all"]
     profiles:
       - run
 
@@ -83,7 +83,6 @@ services:
     volumes:
       - ./output:/app/output
     command:
-      - "rcd-data"
       - "stream"
       - "--profile"
       - "${GEN_PROFILE:-demo}"
