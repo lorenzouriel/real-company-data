@@ -125,7 +125,7 @@ def _resolve_domains(only: str | None) -> list[str]:
 def generate(
     profile: Annotated[str, typer.Option("--profile", "-p", help="Profile: demo | standard | loadtest")] = "demo",
     seed: Annotated[int, typer.Option("--seed", "-s", help="Random seed for reproducibility")] = 42,
-    sink: Annotated[str, typer.Option("--sink", help="Output sink: csv | parquet | postgres | all")] = "parquet",
+    sink: Annotated[str, typer.Option("--sink", help="Output sink: csv | parquet | jsonl | xlsx | postgres | sqlserver | all")] = "parquet",
     only: Annotated[Optional[str], typer.Option("--only", help="Comma-separated list of domains to generate")] = None,
     config: Annotated[str, typer.Option("--config", "-c", help="Path to config.yaml")] = DEFAULT_CONFIG,
 ) -> None:
@@ -244,23 +244,19 @@ def info(
             f"  {name:12s}  customers={p['n_customers']:>8,}  orders={p['n_orders']:>12,}  days={p['date_range_days']}"
         )
     typer.echo(f"\nDomains: {', '.join(DOMAIN_MAP.keys())}")
-    typer.echo("Sinks:   csv | parquet | postgres | all")
+    typer.echo("Sinks:   csv | parquet | jsonl | xlsx | postgres | sqlserver | all")
 
 
 @app.command()
 def stream(
     profile: Annotated[str, typer.Option("--profile", "-p", help="Profile name for FK pool sizing")] = "demo",
     seed: Annotated[int, typer.Option("--seed", "-s", help="Base random seed")] = 42,
-    sink: Annotated[str, typer.Option("--sink", help="Output sink: csv | parquet")] = "parquet",
+    sink: Annotated[str, typer.Option("--sink", help="Output sink: csv | parquet | jsonl | xlsx | postgres | sqlserver | all")] = "parquet",
     rows_per_tick: Annotated[int, typer.Option("--rows-per-tick", "-r", help="Rows per domain per tick")] = 25,
     interval: Annotated[int, typer.Option("--interval", "-i", help="Seconds between ticks; 0=fire once and exit")] = 300,
     config: Annotated[str, typer.Option("--config", "-c", help="Path to config.yaml")] = DEFAULT_CONFIG,
 ) -> None:
     """Stream synthetic rows to existing output every --interval seconds."""
-    if sink == "postgres":
-        typer.echo("Postgres sink is not supported in stream mode.", err=True)
-        raise typer.Exit(1)
-
     _seed_all(seed)
     profile_cfg, full_config = load_profile(config, profile)
     dispatcher = SinkDispatcher.from_flag(sink, profile_cfg, full_config)

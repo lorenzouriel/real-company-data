@@ -2,9 +2,13 @@ output:
   base_path: "./output"
   csv_path: "./output/csv"
   parquet_path: "./output/parquet"
+  jsonl_path: "./output/jsonl"
+  xlsx_path: "./output/xlsx"
   partition_col: "date"
   # Set via env var RCD_POSTGRES_URL or here (not recommended for credentials)
   # postgres_url: "postgresql+psycopg2://rcd:rcd@localhost:5432/rcd_corp"
+  # Set via env var RCD_SQLSERVER_URL or here (not recommended for credentials)
+  # sqlserver_url: "mssql+pyodbc://rcd:rcd@localhost:1433/rcd_corp?driver=ODBC+Driver+18+for+SQL+Server&TrustServerCertificate=yes"
 
 profiles:
   demo:
